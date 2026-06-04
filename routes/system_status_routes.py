@@ -10,7 +10,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import httpx
 from fastapi import APIRouter, Request
@@ -19,9 +19,9 @@ from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
 
-# Per-probe HTTP timeout in seconds. Keeps the endpoint responsive even when
-# a bundled service is completely unreachable (no TCP reset, just silence).
-_PROBE_TIMEOUT = float(os.getenv("SYSTEM_STATUS_TIMEOUT", "3.0"))
+def _probe_timeout() -> float:
+    """Read per-call so env-var changes (e.g. in tests) are respected."""
+    return float(os.getenv("SYSTEM_STATUS_TIMEOUT", "3.0"))
 
 
 class _Unconfigured(Exception):
@@ -65,7 +65,7 @@ async def _chromadb_probe() -> str:
     host = os.getenv("CHROMADB_HOST", "localhost")
     port = int(os.getenv("CHROMADB_PORT", "8100"))
     url = f"http://{host}:{port}/api/v2/heartbeat"
-    async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=_probe_timeout()) as client:
         r = await client.get(url)
         r.raise_for_status()
     return f"Reachable at {host}:{port}"
@@ -74,8 +74,10 @@ async def _chromadb_probe() -> str:
 async def _searxng_probe() -> str:
     """Probe SearXNG by fetching its root page (any 2xx/3xx/4xx = alive)."""
     from src.constants import SEARXNG_INSTANCE
+    if not SEARXNG_INSTANCE or not SEARXNG_INSTANCE.strip():
+        raise _Unconfigured("SEARXNG_INSTANCE is not set — configure the SearXNG URL in .env")
     base = SEARXNG_INSTANCE.rstrip("/")
-    async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=_probe_timeout()) as client:
         r = await client.get(base + "/")
         # 5xx = server error (raise); anything below = server is responding
         if r.status_code >= 500:
@@ -102,7 +104,7 @@ async def _ntfy_probe() -> str:
     base_url = (ntfy.get("base_url") or "").strip().rstrip("/")
     if not base_url:
         raise _Unconfigured("ntfy base URL is empty — edit the integration in Settings > Integrations")
-    async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
+    async with httpx.AsyncClient(timeout=_probe_timeout()) as client:
         r = await client.get(base_url + "/")
         if r.status_code >= 500:
             r.raise_for_status()
@@ -137,7 +139,7 @@ async def _llm_endpoint_probes() -> List[Dict[str, Any]]:
         headers = build_headers(ep.api_key, ep.base_url)
         t0 = time.monotonic()
         try:
-            async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT) as client:
+            async with httpx.AsyncClient(timeout=_probe_timeout()) as client:
                 r = await client.get(models_url, headers=headers)
             ok = r.status_code < 400
             count = None
@@ -187,14 +189,14 @@ def setup_system_status_routes() -> APIRouter:
         """
         require_admin(request)
 
-        bundled = await asyncio.gather(
+        all_results = await asyncio.gather(
             _run_probe("ChromaDB", _chromadb_probe()),
             _run_probe("SearXNG", _searxng_probe()),
             _run_probe("ntfy", _ntfy_probe()),
+            _llm_endpoint_probes(),
         )
-
-        llm_results = await _llm_endpoint_probes()
-
+        bundled = all_results[:3]
+        llm_results = all_results[3]
         services: List[Dict[str, Any]] = list(bundled) + llm_results
 
         # only configured (ok != None) services count toward all_ok

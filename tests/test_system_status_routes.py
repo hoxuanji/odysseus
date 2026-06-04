@@ -131,6 +131,15 @@ class TestSearxngProbe:
             with pytest.raises(real_httpx.HTTPStatusError):
                 asyncio.run(mod._searxng_probe())
 
+    def test_unconfigured_when_instance_empty(self, monkeypatch):
+        mod = _import_module()
+        sys.modules["src.constants"].SEARXNG_INSTANCE = ""
+        try:
+            with pytest.raises(mod._Unconfigured):
+                asyncio.run(mod._searxng_probe())
+        finally:
+            sys.modules["src.constants"].SEARXNG_INSTANCE = "http://searxng-test:8080"
+
 
 class TestNtfyProbe:
     def test_unconfigured_when_no_integration(self):
