@@ -1960,10 +1960,10 @@ async function loadServiceStatus() {
         ? 'var(--green)'
         : svc.ok === false
           ? 'var(--red)'
-          : 'color-mix(in srgb, var(--fg) 40%, transparent)';
+          : 'color-mix(in srgb, var(--fg) 50%, transparent)';
       const dot = `<svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true" style="flex-shrink:0;margin-top:3px"><circle cx="4" cy="4" r="4" fill="${color}"/></svg>`;
-      const latency = (svc.ok === true && svc.latency_ms != null)
-        ? `<span style="font-size:10px;opacity:0.4;margin-left:6px;">${svc.latency_ms}ms</span>`
+      const latency = (svc.ok === true && Number.isFinite(+svc.latency_ms))
+        ? `<span style="font-size:10px;opacity:0.4;margin-left:6px;">${+svc.latency_ms}ms</span>`
         : '';
       const detail = svc.detail
         ? `<div style="font-size:11px;opacity:0.45;margin-top:2px;">${esc(svc.detail)}</div>`
