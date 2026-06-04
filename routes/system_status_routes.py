@@ -52,6 +52,7 @@ async def _run_probe(name: str, coro) -> Dict[str, Any]:
             "detail": str(exc),
         }
     except Exception as exc:
+        logger.warning("Probe %r failed: %s", name, exc)
         return {
             "name": name,
             "ok": False,
@@ -93,7 +94,7 @@ async def _ntfy_probe() -> str:
     red failure.
     """
     from src.integrations import load_integrations
-    integrations = load_integrations()
+    integrations = await asyncio.to_thread(load_integrations)
     ntfy = next(
         (i for i in integrations
          if (i.get("preset") or i.get("name", "")).lower() == "ntfy"),
@@ -143,14 +144,17 @@ async def _llm_endpoint_probes() -> List[Dict[str, Any]]:
                 r = await client.get(models_url, headers=headers)
             ok = r.status_code < 400
             count = None
-            try:
-                body = r.json()
-                models_list = body.get("models") or body.get("data") or []
-                count = len(models_list)
-            except Exception:
-                pass
+            if ok:
+                try:
+                    body = r.json()
+                    models_list = body.get("models") or body.get("data") or []
+                    count = len(models_list)
+                except Exception:
+                    pass
             detail = f"HTTP {r.status_code}"
-            if count is not None:
+            if r.status_code in (401, 403):
+                detail += " — check API key"
+            elif count is not None:
                 detail += f", {count} model{'s' if count != 1 else ''}"
             return {
                 "name": label,
@@ -159,11 +163,12 @@ async def _llm_endpoint_probes() -> List[Dict[str, Any]]:
                 "detail": detail,
             }
         except Exception as exc:
+            logger.warning("Probe failed for endpoint %r: %s", label, exc)
             return {
                 "name": label,
                 "ok": False,
                 "latency_ms": round((time.monotonic() - t0) * 1000),
-                "detail": str(exc),
+                "detail": "Connection failed",
             }
 
     return list(await asyncio.gather(*[_probe_one(ep) for ep in endpoints]))
@@ -201,7 +206,8 @@ def setup_system_status_routes() -> APIRouter:
 
         # only configured (ok != None) services count toward all_ok
         configured = [s for s in services if s["ok"] is not None]
-        all_ok = bool(configured) and all(s["ok"] for s in configured)
+        # Vacuous truth: no configured services means nothing is broken yet
+        all_ok = not configured or all(s["ok"] for s in configured)
 
         return {"services": services, "all_ok": all_ok}
 

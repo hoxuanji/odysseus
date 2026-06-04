@@ -133,12 +133,9 @@ class TestSearxngProbe:
 
     def test_unconfigured_when_instance_empty(self, monkeypatch):
         mod = _import_module()
-        sys.modules["src.constants"].SEARXNG_INSTANCE = ""
-        try:
-            with pytest.raises(mod._Unconfigured):
-                asyncio.run(mod._searxng_probe())
-        finally:
-            sys.modules["src.constants"].SEARXNG_INSTANCE = "http://searxng-test:8080"
+        monkeypatch.setattr(sys.modules["src.constants"], "SEARXNG_INSTANCE", "")
+        with pytest.raises(mod._Unconfigured):
+            asyncio.run(mod._searxng_probe())
 
 
 class TestNtfyProbe:
@@ -147,32 +144,26 @@ class TestNtfyProbe:
         with pytest.raises(mod._Unconfigured):
             asyncio.run(mod._ntfy_probe())
 
-    def test_unconfigured_when_base_url_empty(self):
+    def test_unconfigured_when_base_url_empty(self, monkeypatch):
         mod = _import_module()
-        sys.modules["src.integrations"].load_integrations = lambda: [{"preset": "ntfy", "base_url": ""}]
-        try:
-            with pytest.raises(mod._Unconfigured):
-                asyncio.run(mod._ntfy_probe())
-        finally:
-            sys.modules["src.integrations"].load_integrations = lambda: []
+        monkeypatch.setattr(sys.modules["src.integrations"], "load_integrations", lambda: [{"preset": "ntfy", "base_url": ""}])
+        with pytest.raises(mod._Unconfigured):
+            asyncio.run(mod._ntfy_probe())
 
-    def test_success(self):
+    def test_success(self, monkeypatch):
         mod = _import_module()
-        sys.modules["src.integrations"].load_integrations = lambda: [{"preset": "ntfy", "base_url": "http://ntfy-host:8091"}]
+        monkeypatch.setattr(sys.modules["src.integrations"], "load_integrations", lambda: [{"preset": "ntfy", "base_url": "http://ntfy-host:8091"}])
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         async def mock_get(url, **kwargs):
             return mock_resp
-        try:
-            with patch("httpx.AsyncClient") as mock_cls:
-                mock_client = AsyncMock()
-                mock_client.get = mock_get
-                mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
-                mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-                detail = asyncio.run(mod._ntfy_probe())
-            assert "ntfy-host" in detail
-        finally:
-            sys.modules["src.integrations"].load_integrations = lambda: []
+        with patch("httpx.AsyncClient") as mock_cls:
+            mock_client = AsyncMock()
+            mock_client.get = mock_get
+            mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            detail = asyncio.run(mod._ntfy_probe())
+        assert "ntfy-host" in detail
 
 
 class TestLlmEndpointProbes:
